@@ -1,0 +1,30 @@
+# Dependencies — regenerate via `npm install`
+node_modules/
+
+# electron-builder output (rebuilt via `npm run build`)
+release/
+dist/
+
+# Local credentials (Vertex AI / GCP). .env.example is the safe template.
+.env
+.env.local
+.env.*.local
+
+# Editor / IDE state
+.vscode/
+.idea/
+.claude/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Misc
+*.tmp
+.cache/

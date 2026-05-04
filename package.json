@@ -1,0 +1,42 @@
+{
+  "name": "GCP-nano-banana",
+  "productName": "GCP-nano-banana",
+  "version": "1.0.0",
+  "description": "Desktop studio for Nano Banana Pro (gemini-3-pro-image-preview) on Vertex AI.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --enable-logging",
+    "build": "electron-builder"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@google/genai": "^1.0.0",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.jack.gcp-nano-banana",
+    "productName": "GCP-nano-banana",
+    "mac": {
+      "target": "dir",
+      "category": "public.app-category.graphics-design"
+    },
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*",
+      ".env",
+      "package.json"
+    ],
+    "extraMetadata": {
+      "main": "main.js"
+    }
+  }
+}
