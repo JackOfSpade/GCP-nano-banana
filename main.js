@@ -10,33 +10,37 @@ const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const { GoogleGenAI } = require('@google/genai');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
-const MODEL = 'gemini-3-pro-image-preview';
-
-const HARM_CATEGORIES = [
-  'HARM_CATEGORY_HATE_SPEECH',
-  'HARM_CATEGORY_DANGEROUS_CONTENT',
-  'HARM_CATEGORY_SEXUALLY_EXPLICIT',
-  'HARM_CATEGORY_HARASSMENT',
-  'HARM_CATEGORY_CIVIC_INTEGRITY',
-  'HARM_CATEGORY_IMAGE_HATE',
-  'HARM_CATEGORY_IMAGE_DANGEROUS_CONTENT',
-  'HARM_CATEGORY_IMAGE_HARASSMENT',
-  'HARM_CATEGORY_IMAGE_SEXUALLY_EXPLICIT',
-];
-const SAFETY_THRESHOLDS = [
-  'OFF', 'BLOCK_NONE', 'BLOCK_ONLY_HIGH',
-  'BLOCK_MEDIUM_AND_ABOVE', 'BLOCK_LOW_AND_ABOVE',
-];
-const ASPECT_RATIOS = [
-  'auto', '1:1', '4:3', '3:4', '3:2', '2:3',
-  '16:9', '9:16', '21:9', '4:5', '5:4',
-];
-const IMAGE_SIZES = ['1K', '2K', '4K'];
-const MIME_TYPES = ['image/png', 'image/jpeg'];
-const PERSON_GEN = ['ALLOW_ALL', 'ALLOW_ADULT', 'ALLOW_NONE'];
-const PROMINENT_PEOPLE = ['ALLOW_PROMINENT_PEOPLE', 'BLOCK_PROMINENT_PEOPLE'];
-const MEDIA_RESOLUTIONS = ['MEDIA_RESOLUTION_LOW', 'MEDIA_RESOLUTION_MEDIUM', 'MEDIA_RESOLUTION_HIGH'];
-const RESPONSE_MODALITIES = ['TEXT', 'IMAGE'];
+// Each model has its own option set, defaults, and pricing. Adding a new
+// image model = one new entry in this map; everything else (UI, cost calc,
+// per-turn pinning) is driven from this spec.
+const MODEL_SPECS = {
+  'gemini-3-pro-image-preview': {
+    displayName: 'Nano Banana Pro',
+    aspectRatios: ['auto', '1:1', '4:3', '3:4', '3:2', '2:3', '16:9', '9:16', '21:9', '4:5', '5:4'],
+    imageSizes: ['1K', '2K', '4K'],
+    personGeneration: ['ALLOW_ALL', 'ALLOW_ADULT', 'ALLOW_NONE'],
+    prominentPeople: ['ALLOW_PROMINENT_PEOPLE', 'BLOCK_PROMINENT_PEOPLE'],
+    responseModalities: ['TEXT', 'IMAGE'],
+    harmCategories: [
+      'HARM_CATEGORY_HATE_SPEECH',
+      'HARM_CATEGORY_DANGEROUS_CONTENT',
+      'HARM_CATEGORY_SEXUALLY_EXPLICIT',
+      'HARM_CATEGORY_HARASSMENT',
+      'HARM_CATEGORY_CIVIC_INTEGRITY',
+      'HARM_CATEGORY_IMAGE_HATE',
+      'HARM_CATEGORY_IMAGE_DANGEROUS_CONTENT',
+      'HARM_CATEGORY_IMAGE_HARASSMENT',
+      'HARM_CATEGORY_IMAGE_SEXUALLY_EXPLICIT',
+    ],
+    supportsGoogleSearch: true,
+    supportsSystemInstruction: true,
+    samplingDefaults: { temperature: 1.0, topP: 0.95 },
+    // Vertex AI standard pricing, May 2026
+    // (cloud.google.com/vertex-ai/generative-ai/pricing)
+    pricing: { inputPerToken: 2 / 1_000_000, outputPerToken: 120 / 1_000_000 },
+  },
+};
+const DEFAULT_MODEL = 'gemini-3-pro-image-preview';
 
 // ---------------------------------------------------------------------------
 // genai client
@@ -154,17 +158,9 @@ function collectResponse(resp) {
 const inFlight = new Map();  // streamId -> AbortController
 
 ipcMain.handle('get-options', () => ({
-  models: [MODEL],
-  aspect_ratios: ASPECT_RATIOS,
-  image_sizes: IMAGE_SIZES,
-  mime_types: MIME_TYPES,
-  person_generation: PERSON_GEN,
-  prominent_people: PROMINENT_PEOPLE,
-  media_resolutions: MEDIA_RESOLUTIONS,
-  response_modalities: RESPONSE_MODALITIES,
-  harm_categories: HARM_CATEGORIES,
-  safety_thresholds: SAFETY_THRESHOLDS,
-  auth_mode: authMode(),
+  models: Object.keys(MODEL_SPECS),
+  modelSpecs: MODEL_SPECS,
+  authMode: authMode(),
 }));
 
 ipcMain.handle('generate', async (_event, { model, contents, config }) => {
@@ -174,7 +170,7 @@ ipcMain.handle('generate', async (_event, { model, contents, config }) => {
   catch (e) { return { error: friendlyError(e) }; }
   try {
     const resp = await client.models.generateContent({
-      model: model || MODEL, contents, config,
+      model: model || DEFAULT_MODEL, contents, config,
     });
     return collectResponse(resp);
   } catch (e) {
@@ -196,7 +192,7 @@ ipcMain.handle('generate-stream', async (event, { model, contents, config, strea
   inFlight.set(streamId, ac);
   try {
     const stream = await client.models.generateContentStream({
-      model: model || MODEL, contents, config,
+      model: model || DEFAULT_MODEL, contents, config,
     });
     for await (const chunk of stream) {
       if (ac.signal.aborted) break;
@@ -272,13 +268,13 @@ function generateMarkdown(payload) {
     nodeVersion: process.versions.node,
     electronVersion: process.versions.electron,
     totalMemMB: Math.round(os.totalmem() / 1024 / 1024),
-    freeMemMB:  Math.round(os.freemem()  / 1024 / 1024),
-    timestamp:  new Date().toISOString(),
+    freeMemMB: Math.round(os.freemem() / 1024 / 1024),
+    timestamp: new Date().toISOString(),
   };
 
   const refs = appState?.refs || [];
-  const cfg  = appState?.config || {};
-  const ic   = cfg.imageConfig || {};
+  const cfg = appState?.config || {};
+  const ic = cfg.imageConfig || {};
 
   // Reference table (no base64 data — counts/metadata only).
   let refMd = '';
@@ -341,8 +337,9 @@ ${description || '(none provided)'}
 - References: ${refs.length} / 14
 - History turns: ${appState?.historyDepth ?? 0}${appState?.historyHasImages ? ' (contains images)' : ''}
 - Currently streaming: ${appState?.currentlyStreaming ? 'yes' : 'no'}
-- Session: ${appState?.sessionCount ?? 0} generations · ${appState?.sessionTokens ?? 0} tokens
+- Session: ${appState?.sessionCount ?? 0} generations · ${appState?.sessionTokens ?? 0} tokens${typeof appState?.sessionCost === 'number' ? ` · ~$${appState.sessionCost.toFixed(4)} (Vertex AI rates)` : ''}
 - Last prompt: \`${(appState?.lastPrompt || '').replace(/`/g, '\\`').slice(0, 500)}${(appState?.lastPrompt || '').length > 500 ? '…' : ''}\`
+- Viewport: ${appState?.viewport?.innerWidth ?? '?'} × ${appState?.viewport?.innerHeight ?? '?'} px @ ${appState?.viewport?.devicePixelRatio ?? '?'}× DPR${appState?.viewport?.openPopup ? ` · open popup: \`${appState.viewport.openPopup}\`` : ''}${appState?.diceFace ? ` · dice face: ${appState.diceFace} dots` : ''}
 
 ## System
 - Platform: ${sys.platform} ${sys.arch} (Darwin ${sys.osRelease})

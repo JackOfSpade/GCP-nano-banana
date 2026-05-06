@@ -30,7 +30,7 @@
       </button>
       <div class="topbar-actions">
         <span id="auth-mode" class="auth-pill">checking auth…</span>
-        <span id="session-tokens" class="stat-pill" title="Tokens this session">0 tok</span>
+        <span id="session-cost" class="stat-pill" title="Approx Vertex AI cost this session ($2/M input · $120/M output)">$0.00</span>
         <button id="report-issue" class="ghost-btn small" title="Report an issue with diagnostics">🐞</button>
       </div>
     </header>
@@ -101,22 +101,19 @@
 </div>
 
 <div id="settings-popup" class="popup popup-wide" hidden>
+  <div id="settings-banner" class="settings-banner"></div>
   <div class="popup-tabs">
     <button class="popup-tab active" data-tab="image">Image</button>
     <button class="popup-tab" data-tab="sampling">Sampling</button>
     <button class="popup-tab" data-tab="instruction">Instruction</button>
-    <button class="popup-tab" data-tab="safety">Safety</button>
     <button class="popup-tab" data-tab="presets">Presets</button>
   </div>
   <div class="popup-body">
 
     <section class="popup-section" data-section="image">
       <div class="grid-2">
-        <label><span>Output MIME</span><select id="output_mime_type"></select></label>
-        <label><span>JPEG quality</span><input type="number" id="output_compression_quality" min="1" max="100" placeholder="(unset, JPEG only)" /></label>
         <label><span>Person generation</span><select id="person_generation"></select></label>
         <label><span>Prominent people</span><select id="prominent_people"><option value="">(unset)</option></select></label>
-        <label><span>Input media resolution</span><select id="media_resolution"><option value="">(unset)</option></select></label>
       </div>
       <label class="full">
         <span>Response modalities</span>
@@ -132,7 +129,6 @@
       <div class="grid-2">
         <label><span>Temperature <em id="temp-val">1.00</em></span><input type="range" id="temperature" min="0" max="2" step="0.05" value="1" /></label>
         <label><span>Top P <em id="topp-val">0.95</em></span><input type="range" id="top_p" min="0" max="1" step="0.01" value="0.95" /></label>
-        <label><span>Top K</span><input type="number" id="top_k" min="1" max="200" placeholder="(unset)" /></label>
         <label><span>Seed</span>
           <div class="seed-row">
             <input type="number" id="seed" placeholder="(random)" />
@@ -141,23 +137,7 @@
             </button>
           </div>
         </label>
-        <label><span>Candidates <span class="hint">(images: 1)</span></span><input type="number" id="candidate_count" min="1" max="1" value="1" readonly /></label>
-        <label><span>Max output tokens</span><input type="number" id="max_output_tokens" min="1" max="65536" value="32768" /></label>
-        <label><span>Presence penalty</span><input type="number" id="presence_penalty" step="0.1" min="-2" max="2" placeholder="(unset)" /></label>
-        <label><span>Frequency penalty</span><input type="number" id="frequency_penalty" step="0.1" min="-2" max="2" placeholder="(unset)" /></label>
       </div>
-      <label class="full">
-        <span>Stop sequences <span class="hint">(comma-separated)</span></span>
-        <input type="text" id="stop_sequences" placeholder="e.g. END, STOP" />
-      </label>
-      <label class="check full">
-        <input type="checkbox" id="response_logprobs" />
-        <span>Return logprobs in response</span>
-      </label>
-      <label class="full">
-        <span>logprobs (top-N)</span>
-        <input type="number" id="logprobs" min="1" max="20" placeholder="(unset)" />
-      </label>
     </section>
 
     <section class="popup-section" data-section="instruction" hidden>
@@ -165,10 +145,6 @@
         <span>System instruction</span>
         <textarea id="system_instruction" rows="6" placeholder="e.g. You are a meticulous concept artist."></textarea>
       </label>
-    </section>
-
-    <section class="popup-section" data-section="safety" hidden>
-      <div id="safety-grid" class="safety-grid"></div>
     </section>
 
     <section class="popup-section" data-section="presets" hidden>

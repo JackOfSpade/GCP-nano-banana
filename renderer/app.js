@@ -5,33 +5,21 @@ const LS_SETTINGS = "nbp-settings-v3";
 const LS_PRESETS  = "nbp-presets-v3";
 const MAX_REFS = 14;
 
-// Friendly names for model IDs. Fallback to the raw ID if unknown.
-const MODEL_DISPLAY_NAMES = {
-  "gemini-3-pro-image-preview": "Nano Banana Pro",
-};
-const modelDisplay = (id) => MODEL_DISPLAY_NAMES[id] || id;
+// Look up a model's display name (and other spec fields) from state.options.
+const modelSpec = (id) => state.options?.modelSpecs?.[id] || null;
+const currentSpec = () => modelSpec($("model")?.value);
+const modelDisplay = (id) => modelSpec(id)?.displayName || id;
 
 const VALUE_FIELDS = {
   model: "gemini-3-pro-image-preview",
-  output_mime_type: "image/png",
   person_generation: "ALLOW_ALL",
   prominent_people: "",
-  output_compression_quality: "",
-  media_resolution: "",
   temperature: 1,
   top_p: 0.95,
-  top_k: "",
   seed: "",
-  candidate_count: 1,
-  max_output_tokens: 32768,
-  presence_penalty: "",
-  frequency_penalty: "",
-  stop_sequences: "",
-  logprobs: "",
   system_instruction: "",
 };
 const CHECK_FIELDS = {
-  response_logprobs: false,
   google_search: false,
   stream: true,
 };
@@ -58,7 +46,7 @@ const state = {
   busy: false,
   lastPrompt: "",
   lastError: null,
-  session: { tokens: 0, count: 0 },
+  session: { tokens: 0, count: 0, cost: 0 },
   openPopup: null,
   chatSearch: "",
 };
@@ -123,6 +111,29 @@ const EventLogger = (() => {
 })();
 
 // =====================================================================
+// Per-model cost estimation. Each model's rates come from its spec (sent
+// over IPC by main.js's MODEL_SPECS), so adding a new model gets cost
+// tracking automatically. The API doesn't split candidatesTokenCount
+// between text and image output; we blend candidates at the model's output
+// rate. Accurate for image-dominant outputs, an over-estimate for the rare
+// text-only response.
+// =====================================================================
+function modelRates(modelId) { return modelSpec(modelId)?.pricing || null; }
+function tokenCost(usage, modelId) {
+  const rates = modelRates(modelId);
+  if (!usage || !rates) return 0;
+  return (usage.promptTokenCount     || 0) * rates.inputPerToken
+       + (usage.candidatesTokenCount || 0) * rates.outputPerToken;
+}
+function formatCost(usd) {
+  if (!usd) return "$0.00";
+  if (usd < 1)   return `$${usd.toFixed(3)}`;     // $0.134
+  if (usd < 100) return `$${usd.toFixed(2)}`;     // $12.34
+  return `$${Math.round(usd)}`;                    // $1234
+}
+function formatPerMillion(perToken) { return `$${Math.round(perToken * 1_000_000)}`; }
+
+// =====================================================================
 // Bootstrap
 // =====================================================================
 async function init() {
@@ -130,10 +141,12 @@ async function init() {
   await loadChatsFromDisk();
   buildAuthPill();
   buildModelPopup();
-  buildAspectPopup();
-  buildSizePopup();
-  buildSettingsPopup();
   bindEvents();
+  // Restore the model selection first so applyCurrentModelSpec uses the
+  // right spec, then build the model-specific UIs, then re-apply the rest of
+  // the settings into the freshly-built selects/chips.
+  loadSettings();
+  applyCurrentModelSpec();
   loadSettings();
   renderChatList();
   renderConversation();
@@ -146,7 +159,7 @@ async function init() {
 // =====================================================================
 function buildAuthPill() {
   const el = $("auth-mode");
-  const m = state.options.auth_mode;
+  const m = state.options.authMode;
   el.classList.remove("ok", "warn");
   if (m === "api_key") { el.textContent = "API key"; el.classList.add("ok"); }
   else if (m === "adc") { el.textContent = "ADC"; el.classList.add("ok"); }
@@ -168,16 +181,18 @@ function fillSelect(el, values, { keepFirst = false } = {}) {
 }
 
 function buildSettingsPopup() {
-  const o = state.options;
-  fillSelect($("output_mime_type"), o.mime_types);
-  fillSelect($("person_generation"), o.person_generation);
-  fillSelect($("prominent_people"), o.prominent_people || [], { keepFirst: true });
-  fillSelect($("media_resolution"), o.media_resolutions || [], { keepFirst: true });
+  const spec = currentSpec();
+  if (!spec) return;
+  fillSelect($("person_generation"), spec.personGeneration);
+  fillSelect($("prominent_people"), spec.prominentPeople || [], { keepFirst: true });
 
-  // Response modalities chips
+  // Response modalities chips. Filter live state.modalities to ones the new
+  // model supports so a model switch doesn't leave a stale chip selected.
+  state.modalities = state.modalities.filter(m => spec.responseModalities.includes(m));
+  if (!state.modalities.length) state.modalities = spec.responseModalities.slice();
   const wrap = $("response_modalities");
   wrap.innerHTML = "";
-  for (const m of o.response_modalities) {
+  for (const m of spec.responseModalities) {
     const c = document.createElement("span");
     c.className = "tagchip" + (state.modalities.includes(m) ? " active" : "");
     c.textContent = m;
@@ -192,41 +207,23 @@ function buildSettingsPopup() {
     wrap.appendChild(c);
   }
 
-  // Safety grid (header + per-category dropdowns)
-  const sg = $("safety-grid");
-  sg.innerHTML = "";
-  const h1 = document.createElement("div");
-  h1.className = "head"; h1.textContent = "Category";
-  const h2 = document.createElement("div");
-  h2.className = "head"; h2.textContent = "Threshold";
-  sg.appendChild(h1); sg.appendChild(h2);
-  for (const cat of o.harm_categories) {
-    const lab = document.createElement("div");
-    lab.className = "cat";
-    lab.textContent = cat.replace("HARM_CATEGORY_", "").replaceAll("_", " ");
-    sg.appendChild(lab);
+  // The Google Search and System Instruction rows hide entirely if the
+  // current model doesn't support them.
+  $("google_search").closest("label").hidden = !spec.supportsGoogleSearch;
+  $("system_instruction").closest("label").hidden = !spec.supportsSystemInstruction;
 
-    const sel = document.createElement("select");
-    sel.id = `safety_${cat}`;
-    for (const t of o.safety_thresholds) {
-      const opt = document.createElement("option");
-      opt.value = t; opt.textContent = t;
-      sel.appendChild(opt);
-    }
-    sel.value = "OFF";
-    sel.addEventListener("change", saveSettings);
-    sg.appendChild(sel);
-  }
-
-  // Tabs
+  // Tabs (handlers idempotent; safe to re-attach if buildSettingsPopup runs again)
   for (const tab of document.querySelectorAll(".popup-tab")) {
-    tab.addEventListener("click", () => {
+    tab.onclick = () => {
       for (const t of document.querySelectorAll(".popup-tab")) t.classList.toggle("active", t === tab);
       for (const s of document.querySelectorAll("#settings-popup .popup-section")) {
         s.hidden = s.dataset.section !== tab.dataset.tab;
       }
-    });
+    };
   }
+
+  refreshSettingsTooltips();
+  refreshSettingsBanner();
 }
 
 function buildModelPopup() {
@@ -249,6 +246,9 @@ function buildModelPopup() {
       saveSettings();
       refreshModelChip();
       paintModelActive();
+      // The new model may have different aspect/size/modality/safety options;
+      // rebuild every popup that depends on the spec.
+      applyCurrentModelSpec();
       closePopup();
     };
     wrap.appendChild(b);
@@ -266,10 +266,62 @@ function refreshModelChip() {
   $("model-chip-label").textContent = modelDisplay($("model").value);
 }
 
+// Each setting's tooltip names what it does + which model it applies to.
+// Updated whenever the current model changes so the model name stays in sync.
+const SETTING_TOOLTIPS = {
+  "model-chip":         "Image generation model",
+  "aspect-chip":        "Aspect ratio of generated image",
+  "size-chip":          "Output image resolution",
+  "settings-chip":      "All generation settings (model-specific)",
+  "stream":             "Stream the response progressively (vs wait for the full response)",
+  "person_generation":  "Whether the model can render people. ALLOW_ADULT excludes children; ALLOW_NONE blocks people entirely",
+  "prominent_people":   "Whether the model can render likenesses of public figures (politicians, celebrities, etc.)",
+  "response_modalities":"Which output types the model returns (image, optional text commentary alongside)",
+  "google_search":      "Adds web-search grounding to the request — useful for recent or obscure subjects",
+  "temperature":        "Sampling randomness — higher = more creative variation",
+  "top_p":              "Nucleus sampling — restricts to tokens within cumulative top-P probability",
+  "seed":               "Deterministic seed; same seed + same prompt + same params = same image",
+  "seed-dice":          "Roll a new random seed",
+  "system_instruction": "Persistent meta-instruction applied to every prompt in the chat",
+};
+function refreshSettingsTooltips() {
+  const name = modelDisplay($("model").value) || "current model";
+  for (const [id, base] of Object.entries(SETTING_TOOLTIPS)) {
+    const el = $(id);
+    if (el) el.title = `${base}\n(Setting for: ${name})`;
+  }
+}
+function refreshSettingsBanner() {
+  const el = $("settings-banner");
+  if (!el) return;
+  const name = modelDisplay($("model").value) || "current model";
+  el.textContent = `Settings below apply to: ${name}`;
+}
+
+// Rebuild every UI surface that depends on per-model spec data, then re-apply
+// settings (clamping anything that doesn't fit the new model's options).
+function applyCurrentModelSpec() {
+  const spec = currentSpec();
+  if (!spec) return;
+  // Clamp aspect/size to options the new model actually supports.
+  if (!spec.aspectRatios.includes(state.aspect)) state.aspect = spec.aspectRatios[0] || "auto";
+  if (!spec.imageSizes.includes(state.imageSize)) state.imageSize = spec.imageSizes[0] || "1K";
+  buildAspectPopup();
+  buildSizePopup();
+  buildSettingsPopup();
+  paintAspectActive();
+  paintSizeActive();
+  refreshComposerChips();
+  refreshSettingsTooltips();
+  refreshSettingsBanner();
+}
+
 function buildAspectPopup() {
+  const spec = currentSpec();
+  if (!spec) return;
   const ag = $("aspect-grid");
   ag.innerHTML = "";
-  for (const ar of state.options.aspect_ratios) {
+  for (const ar of spec.aspectRatios) {
     const tile = document.createElement("button");
     tile.type = "button";
     tile.className = "aspect-tile";
@@ -301,9 +353,11 @@ function paintAspectActive() {
 }
 
 function buildSizePopup() {
+  const spec = currentSpec();
+  if (!spec) return;
   const wrap = $("size-list");
   wrap.innerHTML = "";
-  for (const s of state.options.image_sizes) {
+  for (const s of spec.imageSizes) {
     const b = document.createElement("button");
     b.type = "button";
     b.textContent = s;
@@ -338,17 +392,12 @@ function readSettings() {
     aspect_ratio: state.aspect,
     image_size: state.imageSize,
     modalities: state.modalities.slice(),
-    safety: {},
   };
   for (const id of Object.keys(VALUE_FIELDS)) {
     const el = $(id); if (el) s[id] = el.value;
   }
   for (const id of Object.keys(CHECK_FIELDS)) {
     const el = $(id); if (el) s[id] = el.checked;
-  }
-  for (const cat of (state.options?.harm_categories || [])) {
-    const sel = $(`safety_${cat}`);
-    if (sel) s.safety[cat] = sel.value;
   }
   return s;
 }
@@ -368,10 +417,6 @@ function applySettings(s) {
   state.modalities = (s.modalities && s.modalities.length) ? s.modalities.slice() : DEFAULT_MODALITIES.slice();
   for (const chip of document.querySelectorAll("#response_modalities .tagchip")) {
     chip.classList.toggle("active", state.modalities.includes(chip.dataset.value));
-  }
-  for (const cat of (state.options?.harm_categories || [])) {
-    const sel = $(`safety_${cat}`);
-    if (sel) sel.value = s.safety?.[cat] ?? "OFF";
   }
   paintAspectActive();
   paintSizeActive();
@@ -712,12 +757,14 @@ function buildTurnGrounding(items) {
   return g;
 }
 
-function buildTurnMeta(meta) {
+function buildTurnMeta(meta, modelId) {
   const m = document.createElement("div");
   m.className = "turn-meta";
   const u = meta.usage || {};
   const pills = [];
   if (meta.elapsedMs != null) pills.push(`${(meta.elapsedMs / 1000).toFixed(1)}s`);
+  const cost = tokenCost(u, modelId);
+  if (cost > 0) pills.push(`~${formatCost(cost)}`);
   if (u.totalTokenCount != null) pills.push(`${u.totalTokenCount} tok`);
   if (meta.finishReason) pills.push(meta.finishReason);
   for (const p of pills) {
@@ -764,7 +811,7 @@ function buildAssistantTurn(turn, idx) {
   }
   if (text)             block.appendChild(buildTurnText(text, true));
   if (turn.grounding?.length) block.appendChild(buildTurnGrounding(turn.grounding));
-  if (turn.meta)        block.appendChild(buildTurnMeta(turn.meta));
+  if (turn.meta)        block.appendChild(buildTurnMeta(turn.meta, turn.model || $("model").value));
 
   const actions = document.createElement("div");
   actions.className = "turn-actions";
@@ -1096,40 +1143,33 @@ function buildConfig() {
   const cfg = {
     temperature: parseFloat($("temperature").value),
     topP: parseFloat($("top_p").value),
+    // Always-on max quality output: PNG (lossless) + highest input fidelity
+    // for reference images. These were previously user-configurable; the only
+    // sensible values for a quality-first app were "PNG" and "HIGH" so they're
+    // now hardcoded to keep the UI focused.
+    mediaResolution: "MEDIA_RESOLUTION_HIGH",
   };
-  setIfDef(cfg, "candidateCount", numField("candidate_count"));
-  setIfDef(cfg, "maxOutputTokens", numField("max_output_tokens"));
-  setIfDef(cfg, "topK", numField("top_k"));
   setIfDef(cfg, "seed", numField("seed"));
-  setIfDef(cfg, "presencePenalty", numField("presence_penalty"));
-  setIfDef(cfg, "frequencyPenalty", numField("frequency_penalty"));
-  setIfDef(cfg, "logprobs", numField("logprobs"));
-  setIfDef(cfg, "mediaResolution", strField("media_resolution"));
   setIfDef(cfg, "systemInstruction", strField("system_instruction"));
-  if ($("response_logprobs").checked) cfg.responseLogprobs = true;
-
-  const stops = $("stop_sequences").value.split(",").map(s => s.trim()).filter(Boolean);
-  if (stops.length) cfg.stopSequences = stops;
 
   if (state.modalities.length) cfg.responseModalities = state.modalities.slice();
 
-  const ic = {};
+  const ic = {
+    imageSize: state.imageSize,
+    outputMimeType: "image/png",
+    personGeneration: $("person_generation").value,
+  };
   if (state.aspect && state.aspect !== "auto") ic.aspectRatio = state.aspect;
-  ic.imageSize = state.imageSize;
-  ic.outputMimeType = $("output_mime_type").value;
-  ic.personGeneration = $("person_generation").value;
   if ($("prominent_people").value) ic.prominentPeople = $("prominent_people").value;
-  setIfDef(ic, "outputCompressionQuality", numField("output_compression_quality"));
-  if (Object.keys(ic).length) cfg.imageConfig = ic;
+  cfg.imageConfig = ic;
 
   if ($("google_search").checked) cfg.tools = [{ googleSearch: {} }];
 
-  const ss = [];
-  for (const cat of state.options.harm_categories) {
-    const sel = $(`safety_${cat}`);
-    if (sel) ss.push({ category: cat, threshold: sel.value });
-  }
-  if (ss.length) cfg.safetySettings = ss;
+  // Always-permissive: every harm category supported by the current model is
+  // set to OFF on every call. The Safety panel was removed because the model
+  // still has its own training-baked refusals that the API can't disable.
+  const cats = currentSpec()?.harmCategories || [];
+  cfg.safetySettings = cats.map(category => ({ category, threshold: "OFF" }));
 
   return cfg;
 }
@@ -1235,44 +1275,48 @@ function openPopup(id, anchorEl) {
   const popup = $(id);
   if (!popup) return;
   popup.hidden = false;
-  // Render off-screen to measure size first.
+
+  // Reset prior positioning + size clamps so we measure the natural content size.
   popup.style.left = "-9999px";
-  popup.style.top  = "0px";
-  popup.style.maxHeight = "";  // reset previous clamp
+  popup.style.top = "0px";
+  popup.style.bottom = "auto";
+  popup.style.maxHeight = "";
+
   const rect = anchorEl.getBoundingClientRect();
   const vw = window.innerWidth, vh = window.innerHeight;
   const margin = 8;
   const gap = 6;
+  const spaceAbove = rect.top - margin - gap;
+  const spaceBelow = vh - rect.bottom - margin - gap;
 
-  let pw = popup.offsetWidth;
-  // Pin to bottom of viewport - composer area, with at most vh - 2*margin height.
-  const maxH = vh - 2 * margin;
-  if (popup.offsetHeight > maxH) popup.style.maxHeight = maxH + "px";
-  const ph = Math.min(popup.offsetHeight, maxH);
+  // Decide vertical placement and clamp height to fit.
+  const naturalH = popup.offsetHeight;
+  let placeAbove;
+  if (naturalH <= spaceAbove)      placeAbove = true;
+  else if (naturalH <= spaceBelow) placeAbove = false;
+  else                             placeAbove = (spaceAbove >= spaceBelow);
+  const allowedH = placeAbove ? spaceAbove : spaceBelow;
+  if (naturalH > allowedH) popup.style.maxHeight = allowedH + "px";
 
-  // Horizontal: align with anchor left, clamp to viewport.
+  // Horizontal: align with anchor left, clamp into viewport.
+  const pw = popup.offsetWidth;
   let left = rect.left;
   if (left + pw > vw - margin) left = vw - pw - margin;
   if (left < margin) left = margin;
+  popup.style.left = left + "px";
 
-  // Vertical: prefer above the anchor; if no room, place below; if still no
-  // room either way, anchor it to whichever side has more space and let the
-  // popup body scroll inside.
-  const spaceAbove = rect.top - margin - gap;
-  const spaceBelow = vh - rect.bottom - margin - gap;
-  let top;
-  if (ph <= spaceAbove)      top = rect.top - ph - gap;
-  else if (ph <= spaceBelow) top = rect.bottom + gap;
-  else if (spaceAbove >= spaceBelow) {
-    top = margin;
-    popup.style.maxHeight = spaceAbove + "px";
+  // Above: anchor by BOTTOM so content size changes (e.g. switching tabs in
+  // the settings popup) grow/shrink upward without re-cropping or shifting
+  // the visible top edge.
+  // Below: anchor by TOP — content grows downward away from the trigger.
+  if (placeAbove) {
+    popup.style.top = "auto";
+    popup.style.bottom = (vh - rect.top + gap) + "px";
   } else {
-    top = rect.bottom + gap;
-    popup.style.maxHeight = spaceBelow + "px";
+    popup.style.top = (rect.bottom + gap) + "px";
+    popup.style.bottom = "auto";
   }
 
-  popup.style.left = left + "px";
-  popup.style.top  = top + "px";
   state.openPopup = id;
   anchorEl.classList.add("active");
 }
@@ -1354,9 +1398,20 @@ async function runGenerationOnChat(chat) {
       state.session.count += 1;
       const elapsed = performance.now() - t0;
       assistantTurn.meta = { ...(assistantTurn.meta || {}), elapsedMs: elapsed };
-      if (assistantTurn.meta?.usage?.totalTokenCount) {
-        state.session.tokens += assistantTurn.meta.usage.totalTokenCount;
-        $("session-tokens").textContent = `${state.session.tokens.toLocaleString()} tok`;
+      const u = assistantTurn.meta?.usage;
+      if (u) {
+        state.session.tokens += u.totalTokenCount || 0;
+        state.session.cost   += tokenCost(u, assistantTurn.model);
+        const costEl = $("session-cost");
+        costEl.textContent = formatCost(state.session.cost);
+        const rates = modelRates(assistantTurn.model);
+        const ratesLine = rates
+          ? `Rates for ${modelDisplay(assistantTurn.model)}: ${formatPerMillion(rates.inputPerToken)}/M input · ${formatPerMillion(rates.outputPerToken)}/M output`
+          : `(no published rates for ${modelDisplay(assistantTurn.model)} — last turn not counted)`;
+        costEl.title =
+          `Approx Vertex AI cost this session: $${state.session.cost.toFixed(4)}\n` +
+          `${state.session.tokens.toLocaleString()} tokens · ${state.session.count} generations\n` +
+          ratesLine;
       }
       EventLogger.log(`Generate: done in ${elapsed.toFixed(0)} ms`);
     }
@@ -1520,7 +1575,18 @@ function buildReportPayload(description) {
       lastPrompt: state.lastPrompt,
       sessionTokens: state.session.tokens,
       sessionCount: state.session.count,
+      sessionCost: state.session.cost,
       currentlyStreaming: !!state.currentStreamId,
+      // Viewport details — useful for diagnosing layout / popup-positioning bugs.
+      viewport: {
+        innerWidth: window.innerWidth,
+        innerHeight: window.innerHeight,
+        devicePixelRatio: window.devicePixelRatio,
+        openPopup: state.openPopup,
+      },
+      // Currently-rendered dice face (dot count). Helps diagnose dice-related
+      // reports without needing a screenshot.
+      diceFace: document.querySelectorAll('#seed-dice circle').length || null,
     },
     lastError: state.lastError,
     eventLogs: EventLogger.getLogs(),
@@ -1578,6 +1644,80 @@ function openIssueReporter() {
 // =====================================================================
 // Events
 // =====================================================================
+// =====================================================================
+// Dice button — picks the face first (1-6), then constructs a seed whose
+// leading digit IS that face. So "first digit of seed" === dice face,
+// always, no wrap mapping needed (and nothing for the user to mentally
+// translate).
+// =====================================================================
+const DICE_DOTS = {
+  1: [[12, 12]],
+  2: [[8, 8], [16, 16]],
+  3: [[8, 8], [12, 12], [16, 16]],
+  4: [[8, 8], [16, 8], [8, 16], [16, 16]],
+  5: [[8, 8], [16, 8], [12, 12], [8, 16], [16, 16]],
+  6: [[8, 8], [16, 8], [8, 12], [16, 12], [8, 16], [16, 16]],
+};
+function diceFaceSvg(n) {
+  const dots = (DICE_DOTS[n] || DICE_DOTS[1])
+    .map(([x, y]) => `<circle cx="${x}" cy="${y}" r="1.5" fill="currentColor"/>`)
+    .join("");
+  return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/>${dots}</svg>`;
+}
+function genSeedWithLeadingFace(face) {
+  // 9-digit integer (always fits in int32: max is 6_99_999_999 = 699,999,999).
+  const suffix = String(Math.floor(Math.random() * 100_000_000)).padStart(8, "0");
+  return parseInt(`${face}${suffix}`, 10);
+}
+let _diceRolling = false;
+function rollDice() {
+  if (_diceRolling) return;
+  _diceRolling = true;
+
+  const btn = $("seed-dice");
+  const target = Math.floor(Math.random() * 6) + 1;          // pick face 1-6
+  const newSeed = genSeedWithLeadingFace(target);            // seed starts with that digit
+
+  // Cycle random faces during the first ~70% of the roll for the tumbling
+  // visual.
+  const tick = setInterval(() => {
+    btn.innerHTML = diceFaceSvg(Math.floor(Math.random() * 6) + 1);
+  }, 80);
+
+  // "Land" the dice mid-roll: lock onto the target face and reveal the new
+  // seed in the input slightly before the rotation finishes. The remaining
+  // ~180ms of CSS spin then plays out as a settling motion with the result
+  // already visible — feels like the die landed and is settling.
+  let locked = false;
+  const lock = () => {
+    if (locked) return;
+    locked = true;
+    clearInterval(tick);
+    btn.innerHTML = diceFaceSvg(target);
+    $("seed").value = newSeed;
+    saveSettings();
+  };
+
+  let finalized = false;
+  const finalize = () => {
+    if (finalized) return;
+    finalized = true;
+    lock();  // ensure the face/seed are committed even if animationend fired early
+    btn.removeEventListener("animationend", finalize);
+    btn.classList.remove("rolling");
+    _diceRolling = false;
+  };
+
+  btn.addEventListener("animationend", finalize);
+  btn.classList.add("rolling");
+
+  // Lock at ~70% through the 600ms CSS spin. animationend still owns the
+  // final cleanup (rolling class + busy flag).
+  setTimeout(lock, 420);
+  // Defensive fallback in case animationend never fires (e.g. prefers-reduced-motion).
+  setTimeout(finalize, 700);
+}
+
 function bindEvents() {
   $("temperature").addEventListener("input", (e) => $("temp-val").textContent = parseFloat(e.target.value).toFixed(2));
   $("top_p").addEventListener("input", (e) => $("topp-val").textContent = parseFloat(e.target.value).toFixed(2));
@@ -1654,6 +1794,10 @@ function bindEvents() {
     await addRefFiles(files);
   });
 
+  // Stream toggle lives outside #settings-popup, so attach its own save hook
+  // (without it, toggling stream wouldn't persist across app restarts).
+  $("stream").addEventListener("change", saveSettings);
+
   // Send / stop
   $("generate").addEventListener("click", generate);
   $("stop").addEventListener("click", () => {
@@ -1703,10 +1847,7 @@ function bindEvents() {
   });
 
   // Settings buttons inside popup
-  $("seed-dice").addEventListener("click", () => {
-    $("seed").value = Math.floor(Math.random() * 2_147_483_647);
-    saveSettings();
-  });
+  $("seed-dice").addEventListener("click", rollDice);
   $("preset-load").addEventListener("click", loadPreset);
   $("preset-save").addEventListener("click", savePreset);
   $("preset-delete").addEventListener("click", deletePreset);
