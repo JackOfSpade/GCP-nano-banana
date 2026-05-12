@@ -6,7 +6,7 @@
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const os = require('node:os');
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, Menu, MenuItem, ipcMain, dialog } = require('electron');
 const { GoogleGenAI } = require('@google/genai');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
@@ -255,7 +255,7 @@ function fmtBytes(b) {
 function generateMarkdown(payload) {
   const {
     description,
-    appState,    // { authMode, model, config, modalities, refs:[{name,mime,w,h,bytes}], historyDepth, historyHasImages, lastPrompt, sessionTokens, sessionCount, currentlyStreaming }
+    appState,    // { authMode, model, config, refs:[{name,mime,w,h,bytes}], historyDepth, historyHasImages, lastPrompt, sessionTokens, sessionCount, currentlyStreaming }
     lastError,   // { message, ts } | null
     eventLogs,   // string[]
   } = payload || {};
@@ -421,6 +421,44 @@ function createWindow() {
     title: 'Nano Banana Pro Studio',
   });
   win.setMenuBarVisibility(false);
+
+  // Electron has spellcheck on by default, but no built-in context menu — so
+  // right-clicking a misspelled word does nothing unless we provide one.
+  // We show dictionary suggestions for misspellings, then standard edit
+  // actions (cut/copy/paste/select-all) when the click is on editable text.
+  win.webContents.on('context-menu', (_e, params) => {
+    const menu = new Menu();
+    for (const suggestion of params.dictionarySuggestions || []) {
+      menu.append(new MenuItem({
+        label: suggestion,
+        click: () => win.webContents.replaceMisspelling(suggestion),
+      }));
+    }
+    if (params.misspelledWord) {
+      menu.append(new MenuItem({
+        label: 'Add to dictionary',
+        click: () => win.webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord),
+      }));
+      menu.append(new MenuItem({ type: 'separator' }));
+    }
+    if (params.mediaType === 'image' && params.srcURL) {
+      menu.append(new MenuItem({
+        label: 'Copy Image',
+        click: () => win.webContents.copyImageAt(params.x, params.y),
+      }));
+    }
+    if (params.isEditable) {
+      menu.append(new MenuItem({ role: 'cut', enabled: !!params.selectionText }));
+      menu.append(new MenuItem({ role: 'copy', enabled: !!params.selectionText }));
+      menu.append(new MenuItem({ role: 'paste' }));
+      menu.append(new MenuItem({ type: 'separator' }));
+      menu.append(new MenuItem({ role: 'selectAll' }));
+    } else if (params.selectionText) {
+      menu.append(new MenuItem({ role: 'copy' }));
+    }
+    if (menu.items.length) menu.popup({ window: win });
+  });
+
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 }
 

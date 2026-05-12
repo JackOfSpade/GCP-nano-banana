@@ -22,21 +22,23 @@ const VALUE_FIELDS = {
 const CHECK_FIELDS = {
   google_search: false,
   stream: true,
+  // Adds 'TEXT' to responseModalities alongside 'IMAGE'. 'IMAGE' is always sent
+  // — the API rejects TEXT-only for image-generation models, so the prior
+  // dual-chip UI was redesigned to a single checkbox to make that
+  // invalid combination unrepresentable.
+  include_text: true,
 };
-const DEFAULT_MODALITIES = ["TEXT", "IMAGE"];
 const DEFAULTS = {
   ...VALUE_FIELDS,
   ...CHECK_FIELDS,
   aspect_ratio: "auto",
   image_size: "1K",
-  modalities: DEFAULT_MODALITIES.slice(),
   safety: {},
 };
 
 const state = {
   options: null,
   refs: [],            // pending references for next send: [{ name, mime, dataUrl, dataB64, width, height }]
-  modalities: DEFAULT_MODALITIES.slice(),
   aspect: "auto",
   imageSize: "1K",
   chats: [],           // [{ id, title, turns, createdAt, updatedAt }]
@@ -186,26 +188,9 @@ function buildSettingsPopup() {
   fillSelect($("person_generation"), spec.personGeneration);
   fillSelect($("prominent_people"), spec.prominentPeople || [], { keepFirst: true });
 
-  // Response modalities chips. Filter live state.modalities to ones the new
-  // model supports so a model switch doesn't leave a stale chip selected.
-  state.modalities = state.modalities.filter(m => spec.responseModalities.includes(m));
-  if (!state.modalities.length) state.modalities = spec.responseModalities.slice();
-  const wrap = $("response_modalities");
-  wrap.innerHTML = "";
-  for (const m of spec.responseModalities) {
-    const c = document.createElement("span");
-    c.className = "tagchip" + (state.modalities.includes(m) ? " active" : "");
-    c.textContent = m;
-    c.dataset.value = m;
-    c.onclick = () => {
-      c.classList.toggle("active");
-      state.modalities = state.modalities.includes(m)
-        ? state.modalities.filter((x) => x !== m)
-        : [...state.modalities, m];
-      saveSettings();
-    };
-    wrap.appendChild(c);
-  }
+  // Text commentary is optional alongside the image. If the model doesn't
+  // advertise TEXT in its responseModalities, hide the row entirely.
+  $("include_text_row").hidden = !spec.responseModalities.includes("TEXT");
 
   // The Google Search and System Instruction rows hide entirely if the
   // current model doesn't support them.
@@ -276,7 +261,7 @@ const SETTING_TOOLTIPS = {
   "stream":             "Stream the response progressively (vs wait for the full response)",
   "person_generation":  "Whether the model can render people. ALLOW_ADULT excludes children; ALLOW_NONE blocks people entirely",
   "prominent_people":   "Whether the model can render likenesses of public figures (politicians, celebrities, etc.)",
-  "response_modalities":"Which output types the model returns (image, optional text commentary alongside)",
+  "include_text":      "Whether the model returns text commentary alongside the image (image is always returned)",
   "google_search":      "Adds web-search grounding to the request — useful for recent or obscure subjects",
   "temperature":        "Sampling randomness — higher = more creative variation",
   "top_p":              "Nucleus sampling — restricts to tokens within cumulative top-P probability",
@@ -391,7 +376,6 @@ function readSettings() {
   const s = {
     aspect_ratio: state.aspect,
     image_size: state.imageSize,
-    modalities: state.modalities.slice(),
   };
   for (const id of Object.keys(VALUE_FIELDS)) {
     const el = $(id); if (el) s[id] = el.value;
@@ -414,10 +398,6 @@ function applySettings(s) {
   }
   $("temp-val").textContent = parseFloat($("temperature").value).toFixed(2);
   $("topp-val").textContent = parseFloat($("top_p").value).toFixed(2);
-  state.modalities = (s.modalities && s.modalities.length) ? s.modalities.slice() : DEFAULT_MODALITIES.slice();
-  for (const chip of document.querySelectorAll("#response_modalities .tagchip")) {
-    chip.classList.toggle("active", state.modalities.includes(chip.dataset.value));
-  }
   paintAspectActive();
   paintSizeActive();
   refreshComposerChips();
@@ -851,7 +831,7 @@ function renderHero(inner) {
       <span><kbd>⌘N</kbd>new chat</span>
       <span><kbd>⌘K</kbd>focus prompt</span>
       <span><kbd>⌘/</kbd>settings</span>
-      <span><kbd>⌘↩</kbd>send</span>
+      <span><kbd>↩</kbd>send <kbd>⇧↩</kbd>newline</span>
     </div>
   `;
   inner.appendChild(hero);
@@ -1152,7 +1132,7 @@ function buildConfig() {
   setIfDef(cfg, "seed", numField("seed"));
   setIfDef(cfg, "systemInstruction", strField("system_instruction"));
 
-  if (state.modalities.length) cfg.responseModalities = state.modalities.slice();
+  cfg.responseModalities = $("include_text").checked ? ["IMAGE", "TEXT"] : ["IMAGE"];
 
   const ic = {
     imageSize: state.imageSize,
@@ -1568,7 +1548,6 @@ function buildReportPayload(description) {
       authMode: state.options?.auth_mode || "unknown",
       model: $("model").value,
       config: cfg,
-      modalities: state.modalities.slice(),
       refs,
       historyDepth: chat?.turns?.length || 0,
       historyHasImages,
@@ -1731,7 +1710,7 @@ function bindEvents() {
 
   // Prompt
   $("prompt").addEventListener("keydown", (e) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       generate();
       return;
