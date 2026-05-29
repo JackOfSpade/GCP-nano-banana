@@ -9,11 +9,11 @@ const client = apiKey
   ? new GoogleGenAI({ vertexai: true, apiKey })
   : new GoogleGenAI({ vertexai: true, project, location });
 
-const MODEL = 'gemini-3-pro-image-preview';
+const MODEL = 'gemini-3-pro-image';
 
-// 2×2 red PNG as a reference image.
+// 64x64 solid red PNG as a reference image.
 const TINY_PNG_B64 =
-  'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABzenr0AAAAFElEQVQIW2P8z8DwHwAFAQH9pMHcyAAAAABJRU5ErkJggg==';
+  'iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAb0lEQVR4nO3PAQkAAAyEwO9feoshgnABdLep8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3IPanc8OLDQitxAAAAAElFTkSuQmCC';
 
 function baseConfig() {
   return {

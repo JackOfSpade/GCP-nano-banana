@@ -6,7 +6,7 @@
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const os = require('node:os');
-const { app, BrowserWindow, Menu, MenuItem, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, Menu, MenuItem, ipcMain, dialog, clipboard, nativeImage } = require('electron');
 const { GoogleGenAI } = require('@google/genai');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
@@ -14,10 +14,10 @@ require('dotenv').config({ path: path.join(__dirname, '.env') });
 // image model = one new entry in this map; everything else (UI, cost calc,
 // per-turn pinning) is driven from this spec.
 const MODEL_SPECS = {
-  'gemini-3-pro-image-preview': {
+  'gemini-3-pro-image': {
     displayName: 'Nano Banana Pro',
-    aspectRatios: ['auto', '1:1', '4:3', '3:4', '3:2', '2:3', '16:9', '9:16', '21:9', '4:5', '5:4'],
-    imageSizes: ['1K', '2K', '4K'],
+    aspectRatios: ['auto', '1:1', '4:3', '3:4', '3:2', '2:3', '16:9', '9:16', '21:9', '4:5', '5:4', '1:8', '8:1', '1:4', '4:1'],
+    imageSizes: ['512', '1K', '2K', '4K'],
     personGeneration: ['ALLOW_ALL', 'ALLOW_ADULT', 'ALLOW_NONE'],
     prominentPeople: ['ALLOW_PROMINENT_PEOPLE', 'BLOCK_PROMINENT_PEOPLE'],
     responseModalities: ['TEXT', 'IMAGE'],
@@ -34,13 +34,40 @@ const MODEL_SPECS = {
     ],
     supportsGoogleSearch: true,
     supportsSystemInstruction: true,
+    supportsThinking: true,
     samplingDefaults: { temperature: 1.0, topP: 0.95 },
     // Vertex AI standard pricing, May 2026
     // (cloud.google.com/vertex-ai/generative-ai/pricing)
     pricing: { inputPerToken: 2 / 1_000_000, outputPerToken: 120 / 1_000_000 },
   },
+  'gemini-3.1-flash-image': {
+    displayName: 'Nano Banana 2 (Flash)',
+    aspectRatios: ['auto', '1:1', '4:3', '3:4', '3:2', '2:3', '16:9', '9:16', '21:9', '4:5', '5:4', '1:8', '8:1', '1:4', '4:1'],
+    imageSizes: ['512', '1K', '2K', '4K'],
+    personGeneration: ['ALLOW_ALL', 'ALLOW_ADULT', 'ALLOW_NONE'],
+    prominentPeople: ['ALLOW_PROMINENT_PEOPLE', 'BLOCK_PROMINENT_PEOPLE'],
+    responseModalities: ['TEXT', 'IMAGE'],
+    harmCategories: [
+      'HARM_CATEGORY_HATE_SPEECH',
+      'HARM_CATEGORY_DANGEROUS_CONTENT',
+      'HARM_CATEGORY_SEXUALLY_EXPLICIT',
+      'HARM_CATEGORY_HARASSMENT',
+      'HARM_CATEGORY_CIVIC_INTEGRITY',
+      'HARM_CATEGORY_IMAGE_HATE',
+      'HARM_CATEGORY_IMAGE_DANGEROUS_CONTENT',
+      'HARM_CATEGORY_IMAGE_HARASSMENT',
+      'HARM_CATEGORY_IMAGE_SEXUALLY_EXPLICIT',
+    ],
+    supportsGoogleSearch: true,
+    supportsSystemInstruction: true,
+    supportsThinking: true,
+    samplingDefaults: { temperature: 1.0, topP: 0.95 },
+    // Vertex AI standard pricing, May 2026
+    // (cloud.google.com/vertex-ai/generative-ai/pricing)
+    pricing: { inputPerToken: 0.5 / 1_000_000, outputPerToken: 3.0 / 1_000_000 },
+  },
 };
-const DEFAULT_MODEL = 'gemini-3-pro-image-preview';
+const DEFAULT_MODEL = 'gemini-3-pro-image';
 
 // ---------------------------------------------------------------------------
 // genai client
@@ -444,7 +471,18 @@ function createWindow() {
     if (params.mediaType === 'image' && params.srcURL) {
       menu.append(new MenuItem({
         label: 'Copy Image',
-        click: () => win.webContents.copyImageAt(params.x, params.y),
+        // Conversation images are rendered as `data:` URLs (base64). Electron's
+        // built-in copyImageAt() only works for http(s)/file sources and yields
+        // a broken/empty clipboard image for data URLs, so decode it ourselves
+        // into a nativeImage and write that to the clipboard directly.
+        click: () => {
+          if (params.srcURL.startsWith('data:')) {
+            const img = nativeImage.createFromDataURL(params.srcURL);
+            if (!img.isEmpty()) clipboard.writeImage(img);
+          } else {
+            win.webContents.copyImageAt(params.x, params.y);
+          }
+        },
       }));
     }
     if (params.isEditable) {

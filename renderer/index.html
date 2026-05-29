@@ -105,6 +105,7 @@
   <div class="popup-tabs">
     <button class="popup-tab active" data-tab="image">Image</button>
     <button class="popup-tab" data-tab="sampling">Sampling</button>
+    <button class="popup-tab" data-tab="thinking">Thinking</button>
     <button class="popup-tab" data-tab="instruction">Instruction</button>
     <button class="popup-tab" data-tab="presets">Presets</button>
   </div>
@@ -140,6 +141,20 @@
       </div>
     </section>
 
+    <section class="popup-section" data-section="thinking" hidden>
+      <div class="grid-2">
+        <label>
+          <span>Thinking Level</span>
+          <select id="thinking_level">
+            <option value="high">high (default)</option>
+            <option value="medium">medium</option>
+            <option value="low">low</option>
+            <option value="minimal">minimal</option>
+          </select>
+        </label>
+      </div>
+    </section>
+
     <section class="popup-section" data-section="instruction" hidden>
       <label class="full">
         <span>System instruction</span>
@@ -158,7 +173,7 @@
         <button id="copy-js" class="ghost-btn">Copy as JS</button>
         <button id="reset-defaults" class="ghost-btn danger">Reset to defaults</button>
       </div>
-      <input type="hidden" id="model" value="gemini-3-pro-image-preview" />
+      <input type="hidden" id="model" value="gemini-3-pro-image" />
     </section>
 
   </div>

@@ -11,13 +11,14 @@ const currentSpec = () => modelSpec($("model")?.value);
 const modelDisplay = (id) => modelSpec(id)?.displayName || id;
 
 const VALUE_FIELDS = {
-  model: "gemini-3-pro-image-preview",
+  model: "gemini-3-pro-image",
   person_generation: "ALLOW_ALL",
   prominent_people: "",
   temperature: 1,
   top_p: 0.95,
   seed: "",
   system_instruction: "",
+  thinking_level: "high",
 };
 const CHECK_FIELDS = {
   google_search: false,
@@ -192,10 +193,19 @@ function buildSettingsPopup() {
   // advertise TEXT in its responseModalities, hide the row entirely.
   $("include_text_row").hidden = !spec.responseModalities.includes("TEXT");
 
-  // The Google Search and System Instruction rows hide entirely if the
-  // current model doesn't support them.
+  // The Google Search, System Instruction, and Thinking configurations hide
+  // entirely if the current model doesn't support them.
   $("google_search").closest("label").hidden = !spec.supportsGoogleSearch;
   $("system_instruction").closest("label").hidden = !spec.supportsSystemInstruction;
+
+  const thinkingTab = document.querySelector(".popup-tab[data-tab='thinking']");
+  if (thinkingTab) {
+    thinkingTab.hidden = !spec.supportsThinking;
+    if (thinkingTab.hidden && thinkingTab.classList.contains("active")) {
+      const imgTab = document.querySelector(".popup-tab[data-tab='image']");
+      if (imgTab) imgTab.click();
+    }
+  }
 
   // Tabs (handlers idempotent; safe to re-attach if buildSettingsPopup runs again)
   for (const tab of document.querySelectorAll(".popup-tab")) {
@@ -268,6 +278,7 @@ const SETTING_TOOLTIPS = {
   "seed":               "Deterministic seed; same seed + same prompt + same params = same image",
   "seed-dice":          "Roll a new random seed",
   "system_instruction": "Persistent meta-instruction applied to every prompt in the chat",
+  "thinking_level":     "Depth of internal reasoning process before generating the image. High enables deep reasoning; Minimal constraints thinking to minimize latency.",
 };
 function refreshSettingsTooltips() {
   const name = modelDisplay($("model").value) || "current model";
@@ -1151,22 +1162,57 @@ function buildConfig() {
   const cats = currentSpec()?.harmCategories || [];
   cfg.safetySettings = cats.map(category => ({ category, threshold: "OFF" }));
 
+  // Set thinking configuration if supported by the model
+  if (currentSpec()?.supportsThinking) {
+    cfg.thinkingConfig = {
+      thinkingLevel: $("thinking_level").value || "high"
+    };
+  }
+
   return cfg;
 }
 
 function buildContents(prompt) {
-  // Always include prior turns from the current chat.
-  const contents = [];
+  // Multi-turn image editing: the model should always edit the MOST RECENT
+  // image in the conversation, not the original uploaded reference.
+  //
+  // History can accumulate several images: the user's original upload(s) plus
+  // every image the model has generated since. If we re-send all of them, the
+  // model tends to grab the FIRST image it sees and edits that — so a text-only
+  // follow-up ("now make it red") wrongly edits the original input instead of
+  // the latest generated result.
+  //
+  // Fix: keep inlineData on only ONE turn — the single most-recent image-bearing
+  // turn — and strip it from every earlier turn (text is always retained). If
+  // the new turn we're about to send already carries freshly uploaded images,
+  // every image in history is stale, so we keep none of them.
   const chat = currentChat();
-  if (chat) {
-    for (const turn of chat.turns) {
-      const parts = (turn.parts || []).filter(p => p.text || p.inlineData?.data);
-      if (parts.length) contents.push({ role: turn.role || "user", parts });
+  const turns = chat?.turns || [];
+
+  const newRefs = state.refs.filter(r => r.dataB64);
+  const newTurnHasImage = newRefs.length > 0;
+
+  // Index of the most recent history turn carrying an image (-1 if none, or if
+  // the new turn already supplies its own image and history is therefore stale).
+  let keepImageIdx = -1;
+  if (!newTurnHasImage) {
+    for (let i = turns.length - 1; i >= 0; i--) {
+      if ((turns[i].parts || []).some(p => p.inlineData?.data)) { keepImageIdx = i; break; }
     }
   }
-  const userParts = state.refs
-    .filter(r => r.dataB64)
-    .map(r => ({ inlineData: { mimeType: r.mime || "image/png", data: r.dataB64 } }));
+
+  const contents = [];
+  turns.forEach((turn, i) => {
+    const role = (turn.role === "user" || !turn.role) ? "user" : turn.role;
+    const keepImages = i === keepImageIdx;
+    const parts = (turn.parts || []).filter(p =>
+      p.text || (keepImages && p.inlineData?.data)
+    );
+    if (parts.length) contents.push({ role, parts });
+  });
+
+  const userParts = newRefs.map(r =>
+    ({ inlineData: { mimeType: r.mime || "image/png", data: r.dataB64 } }));
   if (prompt) userParts.push({ text: prompt });
   if (userParts.length) contents.push({ role: "user", parts: userParts });
   return contents;

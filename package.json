@@ -2,7 +2,7 @@
   "name": "GCP-nano-banana",
   "productName": "GCP-nano-banana",
   "version": "1.0.0",
-  "description": "Desktop studio for Nano Banana Pro (gemini-3-pro-image-preview) on Vertex AI.",
+  "description": "Desktop studio for Nano Banana Pro (gemini-3-pro-image) on Vertex AI.",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
