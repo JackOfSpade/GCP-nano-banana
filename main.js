@@ -34,7 +34,8 @@ const MODEL_SPECS = {
     ],
     supportsGoogleSearch: true,
     supportsSystemInstruction: true,
-    supportsThinking: true,
+    // gemini-3-pro-image rejects thinking_level (400 INVALID_ARGUMENT).
+    supportsThinking: false,
     samplingDefaults: { temperature: 1.0, topP: 0.95 },
     // Vertex AI standard pricing, May 2026
     // (cloud.google.com/vertex-ai/generative-ai/pricing)
@@ -476,11 +477,18 @@ function createWindow() {
         // a broken/empty clipboard image for data URLs, so decode it ourselves
         // into a nativeImage and write that to the clipboard directly.
         click: () => {
-          if (params.srcURL.startsWith('data:')) {
-            const img = nativeImage.createFromDataURL(params.srcURL);
-            if (!img.isEmpty()) clipboard.writeImage(img);
-          } else {
-            win.webContents.copyImageAt(params.x, params.y);
+          // Native clipboard/nativeImage calls can throw on malformed or
+          // oversized data URLs; an uncaught throw here aborts the whole main
+          // process, so swallow it — failing to copy is not worth a crash.
+          try {
+            if (params.srcURL.startsWith('data:')) {
+              const img = nativeImage.createFromDataURL(params.srcURL);
+              if (!img.isEmpty()) clipboard.writeImage(img);
+            } else {
+              win.webContents.copyImageAt(params.x, params.y);
+            }
+          } catch (err) {
+            console.error('Copy Image failed:', err);
           }
         },
       }));
@@ -499,6 +507,17 @@ function createWindow() {
 
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 }
+
+// Last-resort safety nets. Without these, any uncaught exception or unhandled
+// promise rejection in the main process triggers node::OnFatalError → abort(),
+// which hard-crashes the entire app (window included). Log and keep running;
+// the renderer surfaces real generation errors over IPC already.
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception in main process:', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled promise rejection in main process:', reason);
+});
 
 app.whenReady().then(() => {
   createWindow();

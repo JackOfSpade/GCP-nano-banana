@@ -175,7 +175,14 @@ function buildAuthPill() {
 // Settings popup — build static control sets
 // =====================================================================
 function fillSelect(el, values, { keepFirst = false } = {}) {
-  if (!keepFirst) el.innerHTML = "";
+  // keepFirst preserves a leading placeholder (e.g. "(unset)") but still clears
+  // everything after it — otherwise repeated buildSettingsPopup() calls keep
+  // appending the same values and the list balloons with duplicates.
+  if (keepFirst) {
+    while (el.options.length > 1) el.remove(1);
+  } else {
+    el.innerHTML = "";
+  }
   for (const v of values) {
     const opt = document.createElement("option");
     opt.value = v; opt.textContent = v;
@@ -327,9 +334,11 @@ function buildAspectPopup() {
       tile.innerHTML = `<span class="shape" style="width: 60%; aspect-ratio: 1;"></span><span class="label">auto</span>`;
     } else {
       const [w, h] = ar.split(":").map(Number);
-      const wPct = w >= h ? 90 : (w / h) * 90;
-      const hPct = h >= w ? 60 : (h / w) * 60;
-      tile.innerHTML = `<span class="shape" style="width: ${wPct}%; height: ${hPct}%;"></span><span class="label">${ar}</span>`;
+      // Let CSS aspect-ratio enforce the true w:h, and pin only the dominant
+      // axis to 80% — the other axis derives from the ratio, so 1:1 renders a
+      // real square and extreme ratios (8:1, 1:8) render as thin bars.
+      const dim = w >= h ? "width: 80%" : "height: 80%";
+      tile.innerHTML = `<span class="shape" style="aspect-ratio: ${w}/${h}; ${dim};"></span><span class="label">${ar}</span>`;
     }
     tile.onclick = () => {
       state.aspect = ar;
