@@ -134,7 +134,12 @@ function formatCost(usd) {
   if (usd < 100) return `$${usd.toFixed(2)}`;     // $12.34
   return `$${Math.round(usd)}`;                    // $1234
 }
-function formatPerMillion(perToken) { return `$${Math.round(perToken * 1_000_000)}`; }
+function formatPerMillion(perToken) {
+  const v = perToken * 1_000_000;
+  // Keep cents for sub-$10 rates that aren't whole dollars (e.g. $0.50/M),
+  // round to whole dollars otherwise.
+  return v < 10 && !Number.isInteger(v) ? `$${v.toFixed(2)}` : `$${Math.round(v)}`;
+}
 
 // =====================================================================
 // Bootstrap
@@ -178,6 +183,7 @@ function fillSelect(el, values, { keepFirst = false } = {}) {
   // keepFirst preserves a leading placeholder (e.g. "(unset)") but still clears
   // everything after it — otherwise repeated buildSettingsPopup() calls keep
   // appending the same values and the list balloons with duplicates.
+  const prev = el.value;  // remember selection so a model switch doesn't reset it
   if (keepFirst) {
     while (el.options.length > 1) el.remove(1);
   } else {
@@ -188,6 +194,9 @@ function fillSelect(el, values, { keepFirst = false } = {}) {
     opt.value = v; opt.textContent = v;
     el.appendChild(opt);
   }
+  // Restore the prior selection if the new option set still contains it;
+  // assigning an absent value leaves the select on its first/placeholder option.
+  el.value = prev;
 }
 
 function buildSettingsPopup() {
@@ -434,6 +443,9 @@ function loadSettings() {
 }
 function resetDefaults() {
   applySettings(DEFAULTS);
+  // Defaults may select a different model than the current one — rebuild the
+  // model-specific UIs (aspect/size/settings popups, thinking tab) to match.
+  applyCurrentModelSpec();
   saveSettings();
   EventLogger.log("Settings reset to defaults");
 }
@@ -480,6 +492,9 @@ function loadPreset() {
   const presets = getPresets();
   if (presets[name]) {
     applySettings(presets[name]);
+    // A preset can carry a different model — rebuild the model-specific UIs
+    // (aspect/size/settings popups, thinking tab) so they match the preset.
+    applyCurrentModelSpec();
     saveSettings();
     EventLogger.log(`Preset loaded: ${name}`);
   }
@@ -1600,7 +1615,7 @@ function buildReportPayload(description) {
   return {
     description,
     appState: {
-      authMode: state.options?.auth_mode || "unknown",
+      authMode: state.options?.authMode || "unknown",
       model: $("model").value,
       config: cfg,
       refs,

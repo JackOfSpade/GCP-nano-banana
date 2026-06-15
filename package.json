@@ -2,11 +2,13 @@
   "name": "GCP-nano-banana",
   "productName": "GCP-nano-banana",
   "version": "1.0.0",
-  "description": "Desktop studio for Nano Banana Pro (gemini-3-pro-image) on Vertex AI.",
+  "description": "Desktop studio for Google's Nano Banana image models (Pro & Flash) on Vertex AI.",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "dev": "electron . --enable-logging",
+    "test": "electron test/smoke.js",
+    "test:boot": "electron test/real-boot.js",
     "build": "electron-builder"
   },
   "license": "MIT",
@@ -30,6 +32,7 @@
     },
     "files": [
       "main.js",
+      "model-specs.js",
       "preload.js",
       "renderer/**/*",
       ".env",

@@ -178,15 +178,6 @@ html, body {
   padding: 24px 24px 8px;
   display: flex; flex-direction: column; gap: 24px;
 }
-.empty-state {
-  height: 100%;
-  display: flex; align-items: center; justify-content: center;
-  color: var(--muted);
-  font-size: 14px;
-  padding: 40px 20px;
-  text-align: center;
-}
-
 /* Hero (shown when conversation is empty) */
 .hero {
   flex: 1;
@@ -336,7 +327,6 @@ html, body {
   padding: 2px 8px; border-radius: 999px;
   background: var(--bg-2); border: 1px solid var(--border);
 }
-.turn-meta .pill.error { color: var(--danger); border-color: rgba(226,93,93,0.3); }
 
 .turn-actions {
   display: flex; gap: 4px;
@@ -648,15 +638,6 @@ select {
 .aspect-tile.auto.active::after { color: var(--accent); }
 .aspect-tile.auto .shape { background: transparent; border: 1px dashed var(--muted); }
 
-.chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.tagchip {
-  padding: 5px 11px; border-radius: 999px;
-  background: var(--bg-2); border: 1px solid var(--border-strong);
-  cursor: pointer; user-select: none; font-size: 12px;
-  color: var(--text);
-}
-.tagchip.active { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 600; }
-
 .preset-row { display: flex; gap: 6px; }
 .preset-row select { flex: 1; }
 .popup-row { display: flex; gap: 6px; margin-top: 12px; }
@@ -715,10 +696,6 @@ select {
   border-radius: 8px;
   color: var(--danger);
   white-space: pre-wrap;
-}
-.transient-status {
-  font-size: 12px;
-  color: var(--muted);
 }
 
 @keyframes spin { to { transform: rotate(360deg); } }

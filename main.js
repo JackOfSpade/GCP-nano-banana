@@ -10,65 +10,9 @@ const { app, BrowserWindow, Menu, MenuItem, ipcMain, dialog, clipboard, nativeIm
 const { GoogleGenAI } = require('@google/genai');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
-// Each model has its own option set, defaults, and pricing. Adding a new
-// image model = one new entry in this map; everything else (UI, cost calc,
-// per-turn pinning) is driven from this spec.
-const MODEL_SPECS = {
-  'gemini-3-pro-image': {
-    displayName: 'Nano Banana Pro',
-    aspectRatios: ['auto', '1:1', '4:3', '3:4', '3:2', '2:3', '16:9', '9:16', '21:9', '4:5', '5:4', '1:8', '8:1', '1:4', '4:1'],
-    imageSizes: ['512', '1K', '2K', '4K'],
-    personGeneration: ['ALLOW_ALL', 'ALLOW_ADULT', 'ALLOW_NONE'],
-    prominentPeople: ['ALLOW_PROMINENT_PEOPLE', 'BLOCK_PROMINENT_PEOPLE'],
-    responseModalities: ['TEXT', 'IMAGE'],
-    harmCategories: [
-      'HARM_CATEGORY_HATE_SPEECH',
-      'HARM_CATEGORY_DANGEROUS_CONTENT',
-      'HARM_CATEGORY_SEXUALLY_EXPLICIT',
-      'HARM_CATEGORY_HARASSMENT',
-      'HARM_CATEGORY_CIVIC_INTEGRITY',
-      'HARM_CATEGORY_IMAGE_HATE',
-      'HARM_CATEGORY_IMAGE_DANGEROUS_CONTENT',
-      'HARM_CATEGORY_IMAGE_HARASSMENT',
-      'HARM_CATEGORY_IMAGE_SEXUALLY_EXPLICIT',
-    ],
-    supportsGoogleSearch: true,
-    supportsSystemInstruction: true,
-    // gemini-3-pro-image rejects thinking_level (400 INVALID_ARGUMENT).
-    supportsThinking: false,
-    samplingDefaults: { temperature: 1.0, topP: 0.95 },
-    // Vertex AI standard pricing, May 2026
-    // (cloud.google.com/vertex-ai/generative-ai/pricing)
-    pricing: { inputPerToken: 2 / 1_000_000, outputPerToken: 120 / 1_000_000 },
-  },
-  'gemini-3.1-flash-image': {
-    displayName: 'Nano Banana 2 (Flash)',
-    aspectRatios: ['auto', '1:1', '4:3', '3:4', '3:2', '2:3', '16:9', '9:16', '21:9', '4:5', '5:4', '1:8', '8:1', '1:4', '4:1'],
-    imageSizes: ['512', '1K', '2K', '4K'],
-    personGeneration: ['ALLOW_ALL', 'ALLOW_ADULT', 'ALLOW_NONE'],
-    prominentPeople: ['ALLOW_PROMINENT_PEOPLE', 'BLOCK_PROMINENT_PEOPLE'],
-    responseModalities: ['TEXT', 'IMAGE'],
-    harmCategories: [
-      'HARM_CATEGORY_HATE_SPEECH',
-      'HARM_CATEGORY_DANGEROUS_CONTENT',
-      'HARM_CATEGORY_SEXUALLY_EXPLICIT',
-      'HARM_CATEGORY_HARASSMENT',
-      'HARM_CATEGORY_CIVIC_INTEGRITY',
-      'HARM_CATEGORY_IMAGE_HATE',
-      'HARM_CATEGORY_IMAGE_DANGEROUS_CONTENT',
-      'HARM_CATEGORY_IMAGE_HARASSMENT',
-      'HARM_CATEGORY_IMAGE_SEXUALLY_EXPLICIT',
-    ],
-    supportsGoogleSearch: true,
-    supportsSystemInstruction: true,
-    supportsThinking: true,
-    samplingDefaults: { temperature: 1.0, topP: 0.95 },
-    // Vertex AI standard pricing, May 2026
-    // (cloud.google.com/vertex-ai/generative-ai/pricing)
-    pricing: { inputPerToken: 0.5 / 1_000_000, outputPerToken: 3.0 / 1_000_000 },
-  },
-};
-const DEFAULT_MODEL = 'gemini-3-pro-image';
+// Per-model option sets, defaults, and pricing live in model-specs.js so the
+// renderer (over IPC) and the test harness share one source of truth.
+const { MODEL_SPECS, DEFAULT_MODEL } = require('./model-specs');
 
 // ---------------------------------------------------------------------------
 // genai client
