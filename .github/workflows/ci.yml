@@ -1,0 +1,63 @@
+name: CI
+
+# Runs the project's real (non-placeholder) test suite. The name of this
+# workflow ("CI") and its filename (ci.yml) are load-bearing: the auto-merge
+# workflow (.github/workflows/auto-merge-to-main.yml) looks up runs of the
+# workflow literally named "CI" for a branch's tip commit before merging it.
+#
+# No `branches:` filter on `push` on purpose -- the auto-merge gate looks up
+# a CI run by commit SHA regardless of which branch the commit is on, so this
+# has to be able to run on every branch, not just this one.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    # This is an Electron desktop app: the real tests (test/smoke.js,
+    # test/real-boot.js) boot actual, if hidden, Electron BrowserWindows, which
+    # needs a working window server. macos-latest runners provide one and run
+    # as a normal (non-root) user, so Electron works without extra setup --
+    # unlike ubuntu-latest, which runs as root and additionally needs a virtual
+    # framebuffer (xvfb) plus a Chromium sandbox workaround just to open a
+    # window.
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Syntax sanity-check
+        run: |
+          node --check main.js
+          node --check preload.js
+          node --check model-specs.js
+          node --check renderer/app.js
+
+      # Real test suite (not a placeholder): boots the actual
+      # renderer/index.html + renderer/app.js inside a hidden Electron
+      # BrowserWindow with a mocked window.api (test/mock-preload.js), then
+      # runs ~50+ concrete assertions (test/page-assertions.js) against real
+      # app logic -- titleFromPrompt, groupByRecency date bucketing, cost/token
+      # formatting, per-model buildConfig, preset save/load round-trips,
+      # buildContents multi-turn image handling, and full non-streaming +
+      # streaming generate() flows. Fully offline: no network calls, no Vertex
+      # AI cost, no secrets required.
+      - name: Run smoke test suite (npm test)
+        run: npm test
+
+      # Deeper integration test: require()s the REAL main.js so actual IPC
+      # handlers, preload, disk persistence, and bug-report markdown
+      # generation all execute end-to-end (production window kept hidden).
+      # Still fully offline.
+      - name: Run main-process integration test (npm run test:boot)
+        run: npm run test:boot
