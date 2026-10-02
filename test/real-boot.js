@@ -14,7 +14,10 @@ const { app, BrowserWindow } = require('electron');
 // Isolate userData so the real chats-save/chats-load handlers hit a temp dir.
 app.setPath('userData', fs.mkdtempSync(path.join(os.tmpdir(), 'nbp-boot-')));
 
-// Keep the production window off-screen so the test doesn't flash a window.
+// Keep the production window hidden while the assertions run so the test
+// doesn't flash a window. It is briefly shown for capturePage below: Chromium
+// can only capture a view after it has a composited display surface (notably
+// under Xvfb on hosted Linux runners).
 app.on('browser-window-created', (_e, win) => win.hide());
 
 // Boot the actual app (registers all ipcMain handlers + schedules createWindow).
@@ -75,7 +78,14 @@ app.whenReady().then(async () => {
     ok('real bug-report: authMode not "unknown"', /Auth mode: `(adc|api_key|missing)`/.test(report.markdown), report.markdown.split('\n').find(l => l.includes('Auth mode')) || '');
     ok('real bug-report: includes description', report.markdown.includes('boot integration test'));
 
-    // Visual artifact.
+    // Visual artifact. A hidden BrowserWindow has no display surface on some
+    // Chromium platforms, so expose the real app briefly and wait for two
+    // compositor frames before capturing it. This preserves a real rendered
+    // screenshot rather than masking a capture failure in CI.
+    win.show();
+    await win.webContents.executeJavaScript(`new Promise(resolve => {
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    })`);
     const img = await win.webContents.capturePage();
     fs.writeFileSync(path.join(__dirname, 'real-boot-screenshot.png'), img.toPNG());
 
