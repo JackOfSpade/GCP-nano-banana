@@ -224,6 +224,16 @@ function fmtBytes(b) {
   return `${(b / 1024 / 1024).toFixed(1)} MB`;
 }
 
+// Escape the Markdown metacharacter and its escape character together. Escaping
+// only the delimiter leaves a preceding backslash able to cancel that escape.
+function escapeInlineCode(value) {
+  return String(value ?? '').replace(/[\\`]/g, '\\$&');
+}
+
+function escapeTableCell(value) {
+  return String(value ?? '').replace(/[\\|`]/g, '\\$&');
+}
+
 function generateMarkdown(payload) {
   const {
     description,
@@ -252,7 +262,7 @@ function generateMarkdown(payload) {
   let refMd = '';
   if (refs.length) {
     const rows = refs.map((r, i) =>
-      `| ${i} | \`${(r.name || '—').replace(/\|/g, '\\|')}\` | ${r.mime || '—'} | ${r.w && r.h ? `${r.w}×${r.h}` : '—'} | ${fmtBytes(r.bytes)} |`
+      `| ${i} | ${escapeTableCell(r.name || '—')} | ${escapeTableCell(r.mime || '—')} | ${r.w && r.h ? `${r.w}×${r.h}` : '—'} | ${fmtBytes(r.bytes)} |`
     ).join('\n');
     refMd = `
 ## Reference Images (${refs.length} / 14)
@@ -268,7 +278,7 @@ ${rows}
     lastErrMd = `
 ## Last Error
 - When: ${lastError.ts || 'unknown'}
-- Message: \`${(lastError.message || '').replace(/`/g, '\\`')}\`
+- Message: \`${escapeInlineCode(lastError.message)}\`
 `;
   }
 
@@ -310,7 +320,7 @@ ${description || '(none provided)'}
 - History turns: ${appState?.historyDepth ?? 0}${appState?.historyHasImages ? ' (contains images)' : ''}
 - Currently streaming: ${appState?.currentlyStreaming ? 'yes' : 'no'}
 - Session: ${appState?.sessionCount ?? 0} generations · ${appState?.sessionTokens ?? 0} tokens${typeof appState?.sessionCost === 'number' ? ` · ~$${appState.sessionCost.toFixed(4)} (Vertex AI rates)` : ''}
-- Last prompt: \`${(appState?.lastPrompt || '').replace(/`/g, '\\`').slice(0, 500)}${(appState?.lastPrompt || '').length > 500 ? '…' : ''}\`
+- Last prompt: \`${escapeInlineCode(appState?.lastPrompt).slice(0, 500)}${(appState?.lastPrompt || '').length > 500 ? '…' : ''}\`
 - Viewport: ${appState?.viewport?.innerWidth ?? '?'} × ${appState?.viewport?.innerHeight ?? '?'} px @ ${appState?.viewport?.devicePixelRatio ?? '?'}× DPR${appState?.viewport?.openPopup ? ` · open popup: \`${appState.viewport.openPopup}\`` : ''}${appState?.diceFace ? ` · dice face: ${appState.diceFace} dots` : ''}
 
 ## System
