@@ -1,8 +1,9 @@
 name: CI
 
+# CI must run for every pushed branch because the post-CI auto-merge workflow
+# verifies the exact branch-tip SHA before it can merge that branch into main.
 on:
   push:
-    branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -29,6 +30,12 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: npm
       - run: npm ci
+      - name: Check application syntax
+        run: |
+          node --check main.js
+          node --check preload.js
+          node --check model-specs.js
+          node --check renderer/app.js
       - name: Run offline renderer smoke tests
         run: xvfb-run --auto-servernum npm test
       - name: Run production boot test
