@@ -37,9 +37,12 @@ jobs:
           node --check model-specs.js
           node --check renderer/app.js
       - name: Run offline renderer smoke tests
-        run: xvfb-run --auto-servernum npm test
+        # GitHub-hosted Linux runners execute this Electron test as an
+        # unprivileged checkout, so Electron's packaged SUID sandbox helper
+        # cannot be configured. The test is offline and runs only repo code.
+        run: xvfb-run --auto-servernum ./node_modules/.bin/electron --no-sandbox test/smoke.js
       - name: Run production boot test
-        run: xvfb-run --auto-servernum npm run test:boot
+        run: xvfb-run --auto-servernum ./node_modules/.bin/electron --no-sandbox test/real-boot.js
 
   build:
     runs-on: ubuntu-latest
