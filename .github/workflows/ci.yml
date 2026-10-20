@@ -92,8 +92,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
-      - name: Require every CI job
+      - name: Require every CI prerequisite to succeed
         env:
-          RESULTS: ${{ join(needs.*.result, ',') }}
+          JOB_RESULTS: ${{ toJSON(needs) }}
         run: |
-          test "$RESULTS" = "success,success,success"
+          python3 - <<'PY'
+          import json, os, sys
+          results = json.loads(os.environ["JOB_RESULTS"])
+          failed = [name for name, job in results.items() if job["result"] != "success"]
+          if not results or failed:
+              sys.exit("Unsuccessful prerequisites: " + ", ".join(failed))
+          PY
