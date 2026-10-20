@@ -1,7 +1,5 @@
 name: CI
 
-# CI must run for every pushed branch because the post-CI auto-merge workflow
-# verifies the exact branch-tip SHA before it can merge that branch into main.
 on:
   push:
   pull_request:
@@ -56,3 +54,46 @@ jobs:
       - run: npm ci
       - name: Build a Linux desktop artifact
         run: npm run build -- --linux dir
+
+  macos:
+    name: macOS offline boot and package validation
+    runs-on: macos-latest
+    timeout-minutes: 25
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Exercise renderer and production boot without generation calls
+        run: |
+          npm test
+          npm run test:boot
+      - name: Build and verify the real macOS app bundle
+        run: node scripts/ci-macos-package.mjs
+      - name: Retain package validation summary and synthetic screenshots
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: macos-package-smoke
+          path: |
+            artifacts/macos-package.json
+            test/*screenshot.png
+          if-no-files-found: ignore
+          retention-days: 7
+
+  required:
+    name: CI required
+    if: always()
+    needs: [test, build, macos]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require every CI job
+        env:
+          RESULTS: ${{ join(needs.*.result, ',') }}
+        run: |
+          test "$RESULTS" = "success,success,success"
